@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voxel Craft Sandbox</title>
+<style>
+  :root { --panel: rgba(8,15,25,.78); --line: rgba(255,255,255,.22); }
+  * { box-sizing:border-box }
+  html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#87c9f5; color:#fff; font-family:system-ui,Segoe UI,Arial,sans-serif }
+  canvas { display:block }
+  #hud { position:fixed; inset:0; pointer-events:none; text-shadow:0 2px 3px #0009 }
+  #brand { position:absolute; left:18px; top:14px; font-weight:900; font-size:20px; letter-spacing:.5px }
+  #brand small { display:block; font-size:11px; font-weight:600; opacity:.8; letter-spacing:2px }
+  #stats { position:absolute; right:18px; top:16px; text-align:right; font-size:12px; line-height:1.6; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px }
+  #crosshair { position:absolute; left:50%; top:50%; width:18px; height:18px; transform:translate(-50%,-50%) }
+  #crosshair:before,#crosshair:after { content:""; position:absolute; background:white; box-shadow:0 0 3px #000; border-radius:2px }
+  #crosshair:before { width:2px; height:18px; left:8px; top:0 }
+  #crosshair:after { height:2px; width:18px; left:0; top:8px }
+  #hotbar { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:5px; padding:6px; border-radius:12px; background:var(--panel); border:1px solid var(--line) }
+  .slot { width:54px; height:54px; border:2px solid #ffffff55; border-radius:7px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; background:#ffffff0d; font-size:10px; color:#fff }
+  .slot.active { border:2px solid #fff; background:#ffffff30; transform:translateY(-4px) }
+  .swatch { width:22px; height:22px; border:2px solid #0003; box-shadow:inset -4px -4px #0002,inset 3px 3px #fff2 }
+  #help { position:absolute; left:18px; bottom:18px; max-width:330px; padding:10px 12px; background:var(--panel); border:1px solid var(--line); border-radius:10px; font-size:12px; line-height:1.65 }
+  #overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:linear-gradient(#0b1d3480,#07101dd9); z-index:5 }
+  #card { width:min(520px,calc(100% - 32px)); padding:30px; border:1px solid #ffffff38; border-radius:22px; background:rgba(11,23,38,.93); box-shadow:0 24px 90px #0006; text-align:center }
+  #card h1 { margin:0; font-size:clamp(32px,7vw,52px); letter-spacing:-1.8px }
+  #card h1 span { color:#9ee36f }
+  #card p { color:#d5e3f3; line-height:1.6 }
+  #start { border:0; border-radius:12px; padding:13px 22px; background:#a4ed70; color:#17300b; font-weight:900; font-size:15px; cursor:pointer }
+  .tag { display:inline-block; border:1px solid #ffffff25; background:#ffffff0c; padding:5px 9px; margin:3px; border-radius:20px; color:#dbe9f6; font-size:11px }
+  #toast { position:absolute; top:72px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line); padding:7px 12px; border-radius:9px; opacity:0; transition:opacity .2s }
+  #toast.show { opacity:1 }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="brand">VOXEL <span style="color:#a4ed70">CRAFT</span><small>CREATIVE SANDBOX</small></div>
+  <div id="stats">WORLD: GREENRIDGE<br><span id="blockCount">BLOCKS: --</span><br>MODE: CREATIVE</div>
+  <div id="crosshair"></div>
+  <div id="toast">Block placed</div>
+  <div id="hotbar"></div>
+  <div id="help"><b>CONTROLS</b><br>W A S D · Move &nbsp; SPACE · Jump<br>Mouse · Look &nbsp; Left click · Mine<br>Right click · Place block &nbsp; 1–5 · Select<br>ESC · Release mouse</div>
+</div>
+<div id="overlay">
+  <div id="card">
+    <h1>VOXEL <span>CRAFT</span></h1>
+    <p>A tiny block-built world to explore, dig, and build. This is an original sandbox prototype inspired by voxel-building games, not a copy of Minecraft assets or source code.</p>
+    <div><span class="tag">🌲 Procedural hills</span><span class="tag">⛏️ Mine blocks</span><span class="tag">🧱 Build freely</span></div>
+    <p style="font-size:12px">Runs in a modern Windows browser. Internet is needed once to load the Three.js engine.</p>
+    <button id="start">ENTER WORLD</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(() => {
+  if (!window.THREE) {
+    document.querySelector('#card p').textContent = 'Could not load the 3D engine. Check your internet connection and refresh this page.';
+    document.querySelector('#start').style.display='none'; return;
+  }
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x8acdf4);
+  scene.fog = new THREE.Fog(0x8acdf4, 24, 72);
+  const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, .1, 120);
+  camera.rotation.order = 'YXZ';
+  const renderer = new THREE.WebGLRenderer({antialias:false});
+  renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  document.body.appendChild(renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xdaf3ff,0x62764a,2.0));
+  const sun = new THREE.DirectionalLight(0xfff2d1,2.2); sun.position.set(-25,45,18); sun.castShadow=true; scene.add(sun);
+  sun.shadow.mapSize.set(1024,1024);
+
+  const materials = {
+    grass: new THREE.MeshLambertMaterial({color:0x69b94f}),
+    dirt: new THREE.MeshLambertMaterial({color:0x8b5a38}),
+    stone: new THREE.MeshLambertMaterial({color:0x8e9aa4}),
+    wood: new THREE.MeshLambertMaterial({color:0x9b673b}),
+    leaves: new THREE.MeshLambertMaterial({color:0x287c45}),
+    sand: new THREE.MeshLambertMaterial({color:0xdcc47d}),
+    brick: new THREE.MeshLambertMaterial({color:0xb85c4b})
+  };
+  const blockTypes = [
+    {id:'grass', label:'Grass', color:'#69b94f'},
+    {id:'dirt', label:'Dirt', color:'#8b5a38'},
+    {id:'stone', label:'Stone', color:'#8e9aa4'},
+    {id:'wood', label:'Wood', color:'#9b673b'},
+    {id:'brick', label:'Brick', color:'#b85c4b'}
+  ];
+  const geometry = new THREE.BoxGeometry(1,1,1);
+  const blocks = new Map();
+  const key = (x,y,z)=>`${x},${y},${z}`;
+  let blockTotal = 0;
+  function addBlock(x,y,z,type, count=true) {
+    const k=key(x,y,z); if(blocks.has(k)) return false;
+    const mesh=new THREE.Mesh(geometry,materials[type]||materials.grass);
+    mesh.position.set(x,y,z); mesh.castShadow=true; mesh.receiveShadow=true;
+    mesh.userData={x,y,z,type}; scene.add(mesh); blocks.set(k,mesh);
+    if(count) blockTotal++; return true;
+  }
+  function removeBlock(mesh) {
+    const p=mesh.userData, k=key(p.x,p.y,p.z);
+    scene.remove(mesh); blocks.delete(k); blockTotal--;
+  }
+  function heightAt(x,z) {
+    return Math.floor(2 + Math.sin(x*.23)*1.3 + Math.cos(z*.19)*1.2 + Math.sin((x+z)*.13)*.9);
+  }
+  // Generate a rolling 44 x 44 voxel landscape.
+  for(let x=-22;x<=22;x++) for(let z=-22;z<=22;z++) {
+    const h=heightAt(x,z);
+    for(let y=-2;y<=h;y++) {
+      let type=y===h?'grass':(y>=h-2?'dirt':'stone');
+      if(h<=1 && y===h) type='sand';
+      addBlock(x,y,z,type,false);
+    }
+    // Sparse, stylized trees
+    const seed=Math.abs(Math.sin(x*127.1+z*311.7)*43758.5453)%1;
+    if(seed>.986 && Math.abs(x)>3 && Math.abs(z)>3) {
+      for(let ty=1;ty<=3;ty++) addBlock(x,h+ty,z,'wood',false);
+      for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) for(let dy=2;dy<=4;dy++) {
+        if(Math.abs(dx)+Math.abs(dz)+(dy===4?1:0)<5 && !(dx===0&&dz===0&&dy<4))
+          addBlock(x+dx,h+dy,z+dz,'leaves',false);
+      }
+    }
+  }
+  // A little clearing and a friendly spawn platform.
+  for(let x=-2;x<=2;x++) for(let z=-2;z<=2;z++) {
+    const h=heightAt(x,z);
+    for(let y=h+1;y<=h+5;y++){ const m=blocks.get(key(x,y,z)); if(m){scene.remove(m);blocks.delete(key(x,y,z));} }
+  }
+  const player={x:0,y:heightAt(0,0)+3,z:0, vy:0, yaw:0, pitch:0, grounded:false};
+  camera.position.set(player.x,player.y,player.z);
+  const raycaster=new THREE.Raycaster(); raycaster.far=7;
+  const keys={}; let locked=false, selected=0;
+  const hotbar=document.getElementById('hotbar');
+  function renderHotbar(){
+    hotbar.innerHTML='';
+    blockTypes.forEach((b,i)=>{
+      const el=document.createElement('div'); el.className='slot'+(i===selected?' active':'');
+      el.innerHTML=`<div class="swatch" style="background:${b.color}"></div><span>${i+1} · ${b.label}</span>`;
+      hotbar.appendChild(el);
+    });
+  }
+  renderHotbar();
+  const overlay=document.getElementById('overlay');
+  document.getElementById('start').addEventListener('click',()=>renderer.domElement.requestPointerLock());
+  document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===renderer.domElement; overlay.style.display=locked?'none':'flex';});
+  document.addEventListener('mousemove',e=>{
+    if(!locked)return;
+    player.yaw-=e.movementX*.0022;
+    player.pitch-=e.movementY*.0022;
+    player.pitch=Math.max(-Math.PI/2+.03,Math.min(Math.PI/2-.03,player.pitch));
+    camera.rotation.set(player.pitch,player.yaw,0,'YXZ');
+  });
+  document.addEventListener('keydown',e=>{
+    keys[e.code]=true;
+    if(e.code.startsWith('Digit')) {const n=Number(e.code.slice(5)); if(n>=1&&n<=5){selected=n-1;renderHotbar();}}
+    if(['Space','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+  });
+  document.addEventListener('keyup',e=>keys[e.code]=false);
+  document.addEventListener('contextmenu',e=>e.preventDefault());
+  let lastToast=0;
+  function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');lastToast=performance.now();}
+  function targetBlock(){
+    raycaster.setFromCamera(new THREE.Vector2(0,0),camera);
+    const hits=raycaster.intersectObjects(Array.from(blocks.values()),false);
+    return hits[0]||null;
+  }
+  document.addEventListener('mousedown',e=>{
+    if(!locked)return;
+    const hit=targetBlock(); if(!hit)return;
+    if(e.button===0) { if(hit.object.userData.y<=-2){toast('Bedrock is unbreakable');return;} removeBlock(hit.object); }
+    if(e.button===2) {
+      const n=hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+      const p=hit.object.position.clone().add(n);
+      const bx=Math.round(p.x),by=Math.round(p.y),bz=Math.round(p.z);
+      if(Math.abs(bx-player.x)<1 && Math.abs(bz-player.z)<1 && Math.abs(by-(player.y-1))<2){toast('Too close to place');return;}
+      if(addBlock(bx,by,bz,blockTypes[selected].id)) toast(blockTypes[selected].label+' placed');
+    }
+  });
+  function collidesAt(x,y,z){
+    // Approximate player capsule using two sample points.
+    const r=.28;
+    for(const py of [y-.65,y+.25,y+1.0]) {
+      for(const dx of [-r,r]) for(const dz of [-r,r]) {
+        if(blocks.has(key(Math.floor(x+dx+.5),Math.floor(py+.5),Math.floor(z+dz+.5)))) return true;
+      }
+    }
+    return false;
+  }
+  const clock=new THREE.Clock();
+  function animate(){
+    requestAnimationFrame(animate);
+    const dt=Math.min(clock.getDelta(),.04);
+    if(locked){
+      const forward=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
+      const right=new THREE.Vector3(Math.cos(player.yaw),0,-Math.sin(player.yaw));
+      let move=new THREE.Vector3();
+      if(keys.KeyW||keys.ArrowUp)move.add(forward);
+      if(keys.KeyS||keys.ArrowDown)move.sub(forward);
+      if(keys.KeyD||keys.ArrowRight)move.add(right);
+      if(keys.KeyA||keys.ArrowLeft)move.sub(right);
+      if(move.lengthSq()) move.normalize().multiplyScalar((keys.ShiftLeft?8:5.2)*dt);
+      const nx=player.x+move.x,nz=player.z+move.z;
+      if(!collidesAt(nx,player.y,player.z))player.x=nx;
+      if(!collidesAt(player.x,player.y,nz))player.z=nz;
+      if(keys.Space&&player.grounded){player.vy=7.4;player.grounded=false;}
+      player.vy-=19*dt;
+      const ny=player.y+player.vy*dt;
+      if(!collidesAt(player.x,ny,player.z)){player.y=ny;player.grounded=false;}
+      else {if(player.vy<0)player.grounded=true;player.vy=0;}
+      if(player.y<-10){player.x=0;player.z=0;player.y=heightAt(0,0)+4;player.vy=0;}
+      camera.position.set(player.x,player.y,player.z);
+    }
+    document.getElementById('blockCount').textContent='BLOCKS: '+blocks.size.toLocaleString();
+    if(performance.now()-lastToast>1300)document.getElementById('toast').classList.remove('show');
+    renderer.render(scene,camera);
+  }
+  animate();
+  addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+})();
+</script>
+</body>
+</html>
